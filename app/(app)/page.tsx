@@ -45,6 +45,12 @@ const QUICK_LINKS: { href: string; title: string; desc: string; roles: Role[] }[
     desc: "Trazabilidad de todo el inventario",
     roles: ["admin"],
   },
+  {
+    href: "/usuarios",
+    title: "Gestionar usuarios",
+    desc: "Crear cuentas del equipo y asignar roles",
+    roles: ["admin"],
+  },
 ];
 
 export default async function DashboardPage({

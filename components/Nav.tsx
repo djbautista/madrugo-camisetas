@@ -19,6 +19,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/ventas", label: "Ventas", roles: ["admin", "seller"] },
   { href: "/movimientos", label: "Movimientos", roles: ["admin"] },
   { href: "/reportes", label: "Reportes", roles: ["admin", "viewer"] },
+  { href: "/usuarios", label: "Usuarios", roles: ["admin"] },
 ];
 
 export default function Nav({ role, name }: { role: Role; name: string }) {
