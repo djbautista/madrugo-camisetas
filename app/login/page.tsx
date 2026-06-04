@@ -20,23 +20,6 @@ export default async function LoginPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <LoginForm />
         </div>
-
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-100 p-4 text-xs text-slate-600">
-          <p className="mb-2 font-semibold text-slate-700">
-            Usuarios de prueba
-          </p>
-          <ul className="space-y-1">
-            <li>
-              <span className="font-medium">Administrador:</span> admin / admin123
-            </li>
-            <li>
-              <span className="font-medium">Vendedor:</span> vendedor / venta123
-            </li>
-            <li>
-              <span className="font-medium">Consulta:</span> consulta / ver123
-            </li>
-          </ul>
-        </div>
       </div>
     </main>
   );
