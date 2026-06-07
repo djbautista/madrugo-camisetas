@@ -33,16 +33,17 @@ interface CartLine {
 const initialState: SaleState = {};
 
 // Precio por camiseta de una línea, según tipo de venta.
+// `dozen_price` es el precio POR UNIDAD cuando se vende por docena (mayorista).
 function linePrice(item: SaleItem, saleType: SaleType): number {
   return saleType === "dozen"
-    ? (item.dozen_price as number) / UNITS_PER_DOZEN
+    ? (item.dozen_price as number)
     : item.unit_price;
 }
 
 // Total de una línea (cantidad de unidades o docenas × precio).
 function lineTotal(item: SaleItem, saleType: SaleType, quantity: number): number {
   return saleType === "dozen"
-    ? quantity * (item.dozen_price as number)
+    ? quantity * UNITS_PER_DOZEN * (item.dozen_price as number)
     : quantity * item.unit_price;
 }
 

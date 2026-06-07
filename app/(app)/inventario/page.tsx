@@ -59,7 +59,7 @@ export default async function InventoryPage() {
               <Th>Talla</Th>
               <Th className="text-right">Disponible</Th>
               <Th className="text-right">Precio unidad</Th>
-              <Th className="text-right">Precio docena</Th>
+              <Th className="text-right">Precio docena (c/u)</Th>
               <Th>Estado</Th>
             </tr>
           </thead>

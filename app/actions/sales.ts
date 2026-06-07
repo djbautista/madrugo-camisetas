@@ -126,13 +126,14 @@ export async function createSale(
         item.saleType === "dozen"
           ? item.quantity * UNITS_PER_DOZEN
           : item.quantity;
+      // `dozen_price` es el precio POR UNIDAD cuando se vende por docena (mayorista).
       const pricePerShirt =
         item.saleType === "dozen"
-          ? (inv.dozen_price as number) / UNITS_PER_DOZEN
+          ? (inv.dozen_price as number)
           : inv.unit_price;
       const totalAmount =
         item.saleType === "dozen"
-          ? item.quantity * (inv.dozen_price as number)
+          ? item.quantity * UNITS_PER_DOZEN * (inv.dozen_price as number)
           : item.quantity * inv.unit_price;
 
       grandTotal += totalAmount;

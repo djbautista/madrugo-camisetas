@@ -11,14 +11,14 @@ export async function GET() {
       size: "M",
       quantity: 24,
       unit_price: 45000,
-      dozen_price: 480000,
+      dozen_price: 40000,
     },
     {
       reference: "Selección Colombia",
       size: "L",
       quantity: 12,
       unit_price: 50000,
-      dozen_price: 540000,
+      dozen_price: 45000,
     },
     {
       reference: "Nacional Retro",
