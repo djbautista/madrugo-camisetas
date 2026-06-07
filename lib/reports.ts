@@ -41,30 +41,70 @@ export async function getInventory(): Promise<InventoryRow[]> {
 
 export async function getSalesByDay(): Promise<SalesByDay[]> {
   const db = await getDb();
-  const res = await db.execute(
+  // Ingreso y nº de ventas desde la cabecera; unidades desde las líneas.
+  // Se consultan por separado y se combinan en JS para evitar la
+  // multiplicación de filas (fan-out) que inflaría el ingreso al unir.
+  const headerRes = await db.execute(
     `SELECT date(created_at) AS day,
-            SUM(total_amount)   AS revenue,
-            SUM(units_deducted) AS units,
-            COUNT(*)            AS sales_count
+            SUM(total_amount) AS revenue,
+            COUNT(*)          AS sales_count
      FROM sales
-     GROUP BY date(created_at)
-     ORDER BY day DESC`,
+     GROUP BY date(created_at)`,
   );
-  return res.rows as unknown as SalesByDay[];
+  const unitsRes = await db.execute(
+    `SELECT date(s.created_at)    AS day,
+            SUM(si.units_deducted) AS units
+     FROM sale_items si
+     JOIN sales s ON si.sale_id = s.id
+     GROUP BY date(s.created_at)`,
+  );
+  const unitsByDay = new Map<string, number>(
+    (unitsRes.rows as unknown as { day: string; units: number }[]).map((r) => [
+      r.day,
+      r.units,
+    ]),
+  );
+  const rows = headerRes.rows as unknown as Omit<SalesByDay, "units">[];
+  return rows
+    .map((r) => ({ ...r, units: unitsByDay.get(r.day) ?? 0 }))
+    .sort((a, b) => (a.day < b.day ? 1 : -1));
 }
 
 export async function getSalesBySeller(): Promise<SalesBySeller[]> {
   const db = await getDb();
-  const res = await db.execute(
-    `SELECT seller_name,
-            SUM(total_amount)   AS revenue,
-            SUM(units_deducted) AS units,
-            COUNT(*)            AS sales_count
+  // Igual que getSalesByDay: ingreso/ventas desde cabecera, unidades desde
+  // líneas, combinadas en JS para no contar el ingreso dos veces.
+  const headerRes = await db.execute(
+    `SELECT seller_id,
+            seller_name,
+            SUM(total_amount) AS revenue,
+            COUNT(*)          AS sales_count
      FROM sales
-     GROUP BY seller_id, seller_name
-     ORDER BY revenue DESC`,
+     GROUP BY seller_id, seller_name`,
   );
-  return res.rows as unknown as SalesBySeller[];
+  const unitsRes = await db.execute(
+    `SELECT s.seller_id          AS seller_id,
+            SUM(si.units_deducted) AS units
+     FROM sale_items si
+     JOIN sales s ON si.sale_id = s.id
+     GROUP BY s.seller_id`,
+  );
+  const unitsBySeller = new Map<number, number>(
+    (unitsRes.rows as unknown as { seller_id: number; units: number }[]).map(
+      (r) => [r.seller_id, r.units],
+    ),
+  );
+  const rows = headerRes.rows as unknown as ({
+    seller_id: number;
+  } & Omit<SalesBySeller, "units">)[];
+  return rows
+    .map((r) => ({
+      seller_name: r.seller_name,
+      revenue: r.revenue,
+      sales_count: r.sales_count,
+      units: unitsBySeller.get(r.seller_id) ?? 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
 }
 
 export async function getMoneyByPaymentMethod(): Promise<MoneyByPaymentMethod[]> {
@@ -86,7 +126,7 @@ export async function getBestSellers(limit = 10): Promise<BestSeller[]> {
     sql: `SELECT reference,
                  SUM(units_deducted) AS units,
                  SUM(total_amount)   AS revenue
-          FROM sales
+          FROM sale_items
           GROUP BY reference
           ORDER BY units DESC
           LIMIT ?`,

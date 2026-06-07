@@ -80,15 +80,11 @@ export interface InventoryRow {
   updated_at: string;
 }
 
-export interface SaleRow {
+// Cabecera de una venta: datos a nivel de venta (cliente, pago, recibido,
+// vendedor). Una venta tiene N líneas de producto en `sale_items`.
+export interface SaleHeaderRow {
   id: number;
-  sale_type: SaleType;
-  reference: string;
-  size: string;
-  quantity: number;
-  units_deducted: number;
-  price_per_shirt: number;
-  total_amount: number;
+  total_amount: number; // suma de los total_amount de sus líneas
   amount_received: number;
   seller_id: number;
   seller_name: string;
@@ -96,6 +92,24 @@ export interface SaleRow {
   payment_method: PaymentMethod;
   observations: string | null;
   created_at: string;
+}
+
+// Línea de producto dentro de una venta.
+export interface SaleItemRow {
+  id: number;
+  sale_id: number;
+  sale_type: SaleType;
+  reference: string;
+  size: string;
+  quantity: number;
+  units_deducted: number;
+  price_per_shirt: number;
+  total_amount: number;
+}
+
+// Cabecera con sus líneas, para listados y detalle.
+export interface SaleWithItems extends SaleHeaderRow {
+  items: SaleItemRow[];
 }
 
 export interface MovementRow {

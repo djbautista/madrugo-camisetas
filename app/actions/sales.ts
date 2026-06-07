@@ -24,6 +24,48 @@ const VALID_PAYMENTS: PaymentMethod[] = [
   "otro",
 ];
 
+// Línea cruda recibida del formulario (campo oculto `items`, JSON). Los precios
+// NO se confían al cliente: se recalculan desde el inventario en el servidor.
+interface RawItem {
+  inventoryId: number;
+  saleType: SaleType;
+  quantity: number;
+}
+
+// Línea ya validada y con precios/unidades calculados desde el inventario.
+interface PricedItem {
+  inv: InventoryRow;
+  saleType: SaleType;
+  quantity: number;
+  unitsDeducted: number;
+  pricePerShirt: number;
+  totalAmount: number;
+}
+
+function parseItems(raw: unknown): RawItem[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(raw ?? ""));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+  const items: RawItem[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const e = entry as Record<string, unknown>;
+    const inventoryId = Number(e.inventoryId);
+    const saleType = e.saleType as SaleType;
+    const quantity = Number(e.quantity);
+    if (!Number.isInteger(inventoryId) || inventoryId <= 0) return null;
+    if (saleType !== "unit" && saleType !== "dozen") return null;
+    if (!Number.isInteger(quantity) || quantity <= 0) return null;
+    items.push({ inventoryId, saleType, quantity });
+  }
+  return items;
+}
+
 export async function createSale(
   _prevState: SaleState,
   formData: FormData,
@@ -31,25 +73,17 @@ export async function createSale(
   // Solo Administrador y Vendedor pueden registrar ventas.
   const session = await requireRole("admin", "seller");
 
-  const inventoryId = Number(formData.get("inventoryId"));
-  const saleType = String(formData.get("saleType")) as SaleType;
-  const quantity = Number(formData.get("quantity"));
   const amountReceived = Number(formData.get("amountReceived"));
   const customerName = String(formData.get("customerName") ?? "").trim();
   const paymentMethod = String(
     formData.get("paymentMethod") ?? "",
   ) as PaymentMethod;
   const observations = String(formData.get("observations") ?? "").trim();
+  const items = parseItems(formData.get("items"));
 
-  // --- Validaciones ---
-  if (!inventoryId || Number.isNaN(inventoryId)) {
-    return { error: "Selecciona un producto válido." };
-  }
-  if (saleType !== "unit" && saleType !== "dozen") {
-    return { error: "Selecciona el tipo de venta." };
-  }
-  if (!Number.isInteger(quantity) || quantity <= 0) {
-    return { error: "La cantidad debe ser un número entero mayor a cero." };
+  // --- Validaciones a nivel de venta ---
+  if (!items) {
+    return { error: "Agrega al menos un producto válido a la venta." };
   }
   if (!customerName) {
     return { error: "El nombre del cliente es obligatorio." };
@@ -65,65 +99,77 @@ export async function createSale(
   const tx = await db.transaction("write");
 
   try {
-    const invRes = await tx.execute({
-      sql: "SELECT * FROM inventory WHERE id = ?",
-      args: [inventoryId],
-    });
-    const inv = invRes.rows[0] as unknown as InventoryRow | undefined;
+    // --- Primer paso: validar y calcular precios/unidades desde inventario ---
+    const priced: PricedItem[] = [];
+    // Unidades totales a descontar por producto (agrega líneas duplicadas para
+    // que el descuento defensivo sea correcto y no permita sobreventa).
+    const unitsByInventory = new Map<number, number>();
+    let grandTotal = 0;
 
-    if (!inv) {
-      throw new Error("El producto seleccionado ya no existe.");
-    }
+    for (const item of items) {
+      const invRes = await tx.execute({
+        sql: "SELECT * FROM inventory WHERE id = ?",
+        args: [item.inventoryId],
+      });
+      const inv = invRes.rows[0] as unknown as InventoryRow | undefined;
 
-    if (saleType === "dozen" && inv.dozen_price == null) {
-      throw new Error("Este producto no tiene precio por docena.");
-    }
+      if (!inv) {
+        throw new Error("Uno de los productos seleccionados ya no existe.");
+      }
+      if (item.saleType === "dozen" && inv.dozen_price == null) {
+        throw new Error(
+          `"${inv.reference} · ${inv.size}" no tiene precio por docena.`,
+        );
+      }
 
-    const unitsDeducted =
-      saleType === "dozen" ? quantity * UNITS_PER_DOZEN : quantity;
+      const unitsDeducted =
+        item.saleType === "dozen"
+          ? item.quantity * UNITS_PER_DOZEN
+          : item.quantity;
+      const pricePerShirt =
+        item.saleType === "dozen"
+          ? (inv.dozen_price as number) / UNITS_PER_DOZEN
+          : inv.unit_price;
+      const totalAmount =
+        item.saleType === "dozen"
+          ? item.quantity * (inv.dozen_price as number)
+          : item.quantity * inv.unit_price;
 
-    if (unitsDeducted > inv.quantity) {
-      throw new Error(
-        `Stock insuficiente: disponible ${inv.quantity} unidad(es), se requieren ${unitsDeducted}.`,
+      grandTotal += totalAmount;
+      unitsByInventory.set(
+        item.inventoryId,
+        (unitsByInventory.get(item.inventoryId) ?? 0) + unitsDeducted,
       );
-    }
-
-    const pricePerShirt =
-      saleType === "dozen"
-        ? (inv.dozen_price as number) / UNITS_PER_DOZEN
-        : inv.unit_price;
-    const totalAmount =
-      saleType === "dozen"
-        ? quantity * (inv.dozen_price as number)
-        : quantity * inv.unit_price;
-
-    const createdAt = nowISO();
-
-    // Descuento de stock defensivo: la condición quantity >= ? evita
-    // condiciones de carrera; el CHECK (quantity >= 0) es la última barrera.
-    const update = await tx.execute({
-      sql: "UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ? AND quantity >= ?",
-      args: [unitsDeducted, createdAt, inventoryId, unitsDeducted],
-    });
-
-    if (update.rowsAffected !== 1) {
-      throw new Error("No se pudo descontar el stock. Intenta de nuevo.");
-    }
-
-    const sale = await tx.execute({
-      sql: `INSERT INTO sales
-              (sale_type, reference, size, quantity, units_deducted, price_per_shirt,
-               total_amount, amount_received, seller_id, seller_name, customer_name,
-               payment_method, observations, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        saleType,
-        inv.reference,
-        inv.size,
-        quantity,
+      priced.push({
+        inv,
+        saleType: item.saleType,
+        quantity: item.quantity,
         unitsDeducted,
         pricePerShirt,
         totalAmount,
+      });
+    }
+
+    // Comprobación de stock por producto (sobre el total agregado).
+    for (const [inventoryId, neededUnits] of unitsByInventory) {
+      const inv = priced.find((p) => p.inv.id === inventoryId)!.inv;
+      if (neededUnits > inv.quantity) {
+        throw new Error(
+          `Stock insuficiente en "${inv.reference} · ${inv.size}": disponible ${inv.quantity} unidad(es), se requieren ${neededUnits}.`,
+        );
+      }
+    }
+
+    const createdAt = nowISO();
+
+    // --- Cabecera de la venta ---
+    const sale = await tx.execute({
+      sql: `INSERT INTO sales
+              (total_amount, amount_received, seller_id, seller_name,
+               customer_name, payment_method, observations, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        grandTotal,
         amountReceived,
         session.userId,
         session.name,
@@ -133,31 +179,65 @@ export async function createSale(
         createdAt,
       ],
     });
-
     const saleId = Number(sale.lastInsertRowid);
 
-    await tx.execute({
-      sql: `INSERT INTO movements
-              (type, user_id, user_name, reference, size, quantity_moved,
-               money_received, payment_method, sale_id, observations, created_at)
-             VALUES ('sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        session.userId,
-        session.name,
-        inv.reference,
-        inv.size,
-        -unitsDeducted,
-        amountReceived,
-        paymentMethod,
-        saleId,
-        observations || null,
-        createdAt,
-      ],
-    });
+    // --- Descuento de stock defensivo (uno por producto, con el total agregado) ---
+    // La condición quantity >= ? evita condiciones de carrera; el
+    // CHECK (quantity >= 0) es la última barrera.
+    for (const [inventoryId, neededUnits] of unitsByInventory) {
+      const update = await tx.execute({
+        sql: "UPDATE inventory SET quantity = quantity - ?, updated_at = ? WHERE id = ? AND quantity >= ?",
+        args: [neededUnits, createdAt, inventoryId, neededUnits],
+      });
+      if (update.rowsAffected !== 1) {
+        throw new Error("No se pudo descontar el stock. Intenta de nuevo.");
+      }
+    }
+
+    // --- Líneas y movimientos ---
+    // El dinero recibido es a nivel de venta: se registra una sola vez (en el
+    // primer movimiento) para no contarlo varias veces en el libro.
+    let first = true;
+    for (const p of priced) {
+      await tx.execute({
+        sql: `INSERT INTO sale_items
+                (sale_id, sale_type, reference, size, quantity, units_deducted,
+                 price_per_shirt, total_amount)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          saleId,
+          p.saleType,
+          p.inv.reference,
+          p.inv.size,
+          p.quantity,
+          p.unitsDeducted,
+          p.pricePerShirt,
+          p.totalAmount,
+        ],
+      });
+
+      await tx.execute({
+        sql: `INSERT INTO movements
+                (type, user_id, user_name, reference, size, quantity_moved,
+                 money_received, payment_method, sale_id, observations, created_at)
+               VALUES ('sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          session.userId,
+          session.name,
+          p.inv.reference,
+          p.inv.size,
+          -p.unitsDeducted,
+          first ? amountReceived : null,
+          paymentMethod,
+          saleId,
+          observations || null,
+          createdAt,
+        ],
+      });
+      first = false;
+    }
 
     await tx.commit();
-
-    const result = saleId;
 
     revalidatePath("/ventas");
     revalidatePath("/inventario");
@@ -165,7 +245,7 @@ export async function createSale(
     revalidatePath("/movimientos");
     revalidatePath("/");
 
-    return { success: "Venta registrada correctamente.", saleId: result };
+    return { success: "Venta registrada correctamente.", saleId };
   } catch (err) {
     await tx.rollback();
     return {
