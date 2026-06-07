@@ -60,7 +60,10 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
   const [reference, setReference] = useState("");
   const [itemId, setItemId] = useState("");
   const [saleType, setSaleType] = useState<SaleType>("unit");
-  const [quantity, setQuantity] = useState(1);
+  // Texto crudo del input para permitir borrarlo mientras se escribe;
+  // vacío o inválido => cantidad 0, que bloquea "Agregar a la venta".
+  const [quantityInput, setQuantityInput] = useState("1");
+  const quantity = Math.floor(Number(quantityInput)) || 0;
 
   // --- Carrito y campos a nivel de venta ---
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -93,7 +96,7 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
       setReference("");
       setItemId("");
       setSaleType("unit");
-      setQuantity(1);
+      setQuantityInput("1");
       setCart([]);
       setAmountReceived("");
     }
@@ -155,7 +158,7 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
     setReference("");
     setItemId("");
     setSaleType("unit");
-    setQuantity(1);
+    setQuantityInput("1");
   }
 
   function removeLine(index: number) {
@@ -244,10 +247,8 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
                   type="number"
                   min={1}
                   step={1}
-                  value={quantity}
-                  onChange={(e) =>
-                    setQuantity(Math.max(1, Number(e.target.value)))
-                  }
+                  value={quantityInput}
+                  onChange={(e) => setQuantityInput(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
                 {selected && (
