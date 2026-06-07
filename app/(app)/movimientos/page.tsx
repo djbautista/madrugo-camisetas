@@ -17,11 +17,15 @@ import {
   type PaymentMethod,
 } from "@/lib/types";
 
-const TYPE_COLORS: Record<MovementType, "blue" | "green" | "amber" | "slate"> = {
+const TYPE_COLORS: Record<
+  MovementType,
+  "blue" | "green" | "amber" | "slate" | "red"
+> = {
   import: "blue",
   sale: "green",
   correction: "amber",
   adjustment: "amber",
+  return: "red",
 };
 
 export default async function MovementsPage() {

@@ -36,13 +36,19 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> =
     string
   >;
 
-export type MovementType = "import" | "sale" | "correction" | "adjustment";
+export type MovementType =
+  | "import"
+  | "sale"
+  | "correction"
+  | "adjustment"
+  | "return";
 
 export const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
   import: "Importación",
   sale: "Venta",
   correction: "Corrección",
   adjustment: "Ajuste",
+  return: "Devolución",
 };
 
 export type ImportMode = "replace" | "merge";
@@ -110,6 +116,35 @@ export interface SaleItemRow {
 // Cabecera con sus líneas, para listados y detalle.
 export interface SaleWithItems extends SaleHeaderRow {
   items: SaleItemRow[];
+}
+
+// Cabecera de una devolución: datos a nivel de devolución (cliente, método de
+// reembolso, quién la registró). Una devolución tiene N líneas en `return_items`.
+export interface ReturnHeaderRow {
+  id: number;
+  total_refund: number; // suma de los refund_amount de sus líneas
+  user_id: number;
+  user_name: string;
+  customer_name: string | null;
+  payment_method: PaymentMethod;
+  observations: string | null;
+  created_at: string;
+}
+
+// Línea de producto dentro de una devolución.
+export interface ReturnItemRow {
+  id: number;
+  return_id: number;
+  reference: string;
+  size: string;
+  quantity: number;
+  restocked: number; // 0 | 1 (SQLite no tiene booleanos)
+  refund_amount: number; // total de la línea
+}
+
+// Cabecera con sus líneas, para listados y detalle.
+export interface ReturnWithItems extends ReturnHeaderRow {
+  items: ReturnItemRow[];
 }
 
 export interface MovementRow {

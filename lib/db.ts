@@ -74,9 +74,33 @@ const SCHEMA = [
      total_amount    REAL NOT NULL
    )`,
   `CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)`,
+  // Cabecera de devolución. Los datos de producto viven en `return_items` (una
+  // devolución puede tener varias líneas).
+  `CREATE TABLE IF NOT EXISTS returns (
+     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+     total_refund   REAL NOT NULL,
+     user_id        INTEGER NOT NULL,
+     user_name      TEXT NOT NULL,
+     customer_name  TEXT,
+     payment_method TEXT NOT NULL,
+     observations   TEXT,
+     created_at     TEXT NOT NULL
+   )`,
+  // Líneas de producto de cada devolución. `restocked` indica si la línea
+  // reingresó al inventario (0 = no, p. ej. camiseta defectuosa).
+  `CREATE TABLE IF NOT EXISTS return_items (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     return_id     INTEGER NOT NULL REFERENCES returns(id),
+     reference     TEXT NOT NULL,
+     size          TEXT NOT NULL,
+     quantity      INTEGER NOT NULL CHECK (quantity > 0),
+     restocked     INTEGER NOT NULL CHECK (restocked IN (0,1)),
+     refund_amount REAL NOT NULL CHECK (refund_amount >= 0)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_return_items_return_id ON return_items(return_id)`,
   `CREATE TABLE IF NOT EXISTS movements (
      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-     type           TEXT NOT NULL CHECK (type IN ('import','sale','correction','adjustment')),
+     type           TEXT NOT NULL CHECK (type IN ('import','sale','correction','adjustment','return')),
      user_id        INTEGER NOT NULL,
      user_name      TEXT NOT NULL,
      reference      TEXT NOT NULL,
@@ -181,6 +205,72 @@ async function migrate(db: Client): Promise<void> {
   }
 }
 
+// Migración de una sola vez (detectada por esquema, idempotente): amplía el
+// CHECK de `movements.type` para admitir 'return' (devoluciones).
+//
+// SQLite no permite ALTER de un CHECK, así que se reconstruye la tabla con el
+// mismo patrón que migrate(): crear nueva, copiar (preservando ids), borrar y
+// renombrar. Es seguro porque ninguna tabla referencia a `movements` por FK y
+// `movements.sale_id` es un INTEGER plano (sin FK saliente); el PRAGMA de FK
+// se mantiene por consistencia con migrate().
+//
+// Detección: el SQL almacenado en sqlite_master ya contiene 'return' en las BD
+// nuevas (SCHEMA) o ya migradas, así que en esos casos no hace nada.
+async function migrateMovementsTypeCheck(db: Client): Promise<void> {
+  const ddl = await db.execute(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'movements'",
+  );
+  const sql = String(ddl.rows[0]?.sql ?? "");
+  if (sql.includes("'return'")) return; // BD nueva o ya migrada: nada que hacer.
+
+  await db.execute("PRAGMA foreign_keys = OFF");
+  const tx = await db.transaction("write");
+  try {
+    // Re-verificar DENTRO del lock de escritura (mismo motivo que en migrate():
+    // varias instancias serverless pueden arrancar a la vez).
+    const recheck = await tx.execute(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'movements'",
+    );
+    if (String(recheck.rows[0]?.sql ?? "").includes("'return'")) {
+      await tx.commit();
+      return;
+    }
+
+    await tx.execute(
+      `CREATE TABLE movements_new (
+         id             INTEGER PRIMARY KEY AUTOINCREMENT,
+         type           TEXT NOT NULL CHECK (type IN ('import','sale','correction','adjustment','return')),
+         user_id        INTEGER NOT NULL,
+         user_name      TEXT NOT NULL,
+         reference      TEXT NOT NULL,
+         size           TEXT NOT NULL,
+         quantity_moved INTEGER NOT NULL,
+         money_received REAL,
+         payment_method TEXT,
+         sale_id        INTEGER,
+         observations   TEXT,
+         created_at     TEXT NOT NULL
+       )`,
+    );
+    await tx.execute(
+      `INSERT INTO movements_new
+         (id, type, user_id, user_name, reference, size, quantity_moved,
+          money_received, payment_method, sale_id, observations, created_at)
+       SELECT id, type, user_id, user_name, reference, size, quantity_moved,
+              money_received, payment_method, sale_id, observations, created_at
+       FROM movements`,
+    );
+    await tx.execute("DROP TABLE movements");
+    await tx.execute("ALTER TABLE movements_new RENAME TO movements");
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    await db.execute("PRAGMA foreign_keys = ON");
+  }
+}
+
 async function init(): Promise<void> {
   const db = client();
   // Crear esquema (idempotente).
@@ -188,6 +278,9 @@ async function init(): Promise<void> {
 
   // Migrar el esquema antiguo de ventas si corresponde (una sola vez).
   await migrate(db);
+
+  // Ampliar el CHECK de movements.type para 'return' si corresponde (una sola vez).
+  await migrateMovementsTypeCheck(db);
 
   // Semilla de usuarios (solo si no hay). ON CONFLICT evita choques si dos
   // instancias arrancan a la vez en producción.

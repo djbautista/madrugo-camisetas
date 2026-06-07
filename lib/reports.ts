@@ -4,6 +4,10 @@ import type { InventoryRow } from "./types";
 
 // Consultas agregadas para los reportes. Todo se calcula desde
 // los datos reales de inventario, ventas y movimientos.
+//
+// Nota: las cifras de ventas son BRUTAS — las devoluciones (tabla `returns`)
+// no se restan aquí. El stock reingresado sí se refleja automáticamente en los
+// reportes de inventario porque actualizan `inventory.quantity`.
 
 export interface SalesByDay {
   day: string; // YYYY-MM-DD
