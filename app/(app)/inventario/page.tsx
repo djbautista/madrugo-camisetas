@@ -7,7 +7,7 @@ import {
   Td,
   Th,
 } from "@/components/ui";
-import { getInventory } from "@/lib/reports";
+import { getInventoryWithConsignment } from "@/lib/reports";
 import { formatCOP } from "@/lib/format";
 import { requireSession } from "@/lib/session";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/types";
@@ -21,14 +21,14 @@ function StockBadge({ quantity }: { quantity: number }) {
 
 export default async function InventoryPage() {
   const session = await requireSession();
-  const inventory = await getInventory();
+  const inventory = await getInventoryWithConsignment();
   const isAdmin = session.role === "admin";
 
   return (
     <div>
       <PageHeader
         title="Inventario"
-        description="Stock disponible en tiempo real por referencia y talla."
+        description="Stock en tiempo real por referencia y talla: disponible en el almacén y en consignación."
       />
 
       {isAdmin && inventory.length > 0 && (
@@ -58,6 +58,8 @@ export default async function InventoryPage() {
               <Th>Referencia</Th>
               <Th>Talla</Th>
               <Th className="text-right">Disponible</Th>
+              <Th className="text-right">En consignación</Th>
+              <Th className="text-right">Total</Th>
               <Th className="text-right">Precio unidad</Th>
               <Th className="text-right">Precio docena (c/u)</Th>
               <Th>Estado</Th>
@@ -69,6 +71,12 @@ export default async function InventoryPage() {
                 <Td className="font-medium text-slate-900">{item.reference}</Td>
                 <Td>{item.size}</Td>
                 <Td className="text-right font-semibold">{item.quantity}</Td>
+                <Td className="text-right text-slate-500">
+                  {item.consigned > 0 ? item.consigned : "—"}
+                </Td>
+                <Td className="text-right font-medium">
+                  {item.quantity + item.consigned}
+                </Td>
                 <Td className="text-right">{formatCOP(item.unit_price)}</Td>
                 <Td className="text-right">{formatCOP(item.dozen_price)}</Td>
                 <Td>

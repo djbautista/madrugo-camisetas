@@ -26,6 +26,8 @@ const TYPE_COLORS: Record<
   correction: "amber",
   adjustment: "amber",
   return: "red",
+  consignment_out: "amber",
+  consignment_in: "blue",
 };
 
 export default async function MovementsPage() {

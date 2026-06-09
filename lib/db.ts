@@ -123,6 +123,54 @@ const SCHEMA = [
      rows_failed   INTEGER NOT NULL,
      created_at    TEXT NOT NULL
    )`,
+  // --- Consignaciones ---
+  // Consignatarios: lista gestionada de personas que se llevan stock en
+  // consignación. `active = 0` es baja lógica (no se le entrega más, pero
+  // conserva existencias e historial).
+  `CREATE TABLE IF NOT EXISTS consignees (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     name       TEXT NOT NULL,
+     phone      TEXT,
+     notes      TEXT,
+     active     INTEGER NOT NULL CHECK (active IN (0,1)) DEFAULT 1,
+     created_at TEXT NOT NULL
+   )`,
+  // Existencias actuales en poder de cada consignatario, por referencia+talla.
+  // Saldo materializado (igual que inventory.quantity): cada entrega suma y cada
+  // devolución resta dentro de la misma transacción que crea el evento.
+  `CREATE TABLE IF NOT EXISTS consignment_stock (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     consignee_id INTEGER NOT NULL REFERENCES consignees(id),
+     reference    TEXT NOT NULL,
+     size         TEXT NOT NULL,
+     quantity     INTEGER NOT NULL CHECK (quantity >= 0),
+     updated_at   TEXT NOT NULL,
+     UNIQUE (consignee_id, reference, size)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_consignment_stock_consignee ON consignment_stock(consignee_id)`,
+  // Cabecera de un evento de consignación. type 'out' = entrega (sale del
+  // almacén), 'in' = devolución (regresa al almacén). Las líneas viven en
+  // `consignment_event_items`.
+  `CREATE TABLE IF NOT EXISTS consignment_events (
+     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+     type           TEXT NOT NULL CHECK (type IN ('out','in')),
+     consignee_id   INTEGER NOT NULL REFERENCES consignees(id),
+     consignee_name TEXT NOT NULL,
+     user_id        INTEGER NOT NULL,
+     user_name      TEXT NOT NULL,
+     total_units    INTEGER NOT NULL,
+     observations   TEXT,
+     created_at     TEXT NOT NULL
+   )`,
+  // Líneas de producto de cada evento de consignación.
+  `CREATE TABLE IF NOT EXISTS consignment_event_items (
+     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+     event_id  INTEGER NOT NULL REFERENCES consignment_events(id),
+     reference TEXT NOT NULL,
+     size      TEXT NOT NULL,
+     quantity  INTEGER NOT NULL CHECK (quantity > 0)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_consignment_event_items_event ON consignment_event_items(event_id)`,
 ];
 
 // Migración de una sola vez (detectada por esquema, idempotente): convierte el
@@ -271,6 +319,70 @@ async function migrateMovementsTypeCheck(db: Client): Promise<void> {
   }
 }
 
+// Migración de una sola vez (detectada por esquema, idempotente): amplía el
+// CHECK de `movements.type` para admitir los movimientos de consignación
+// ('consignment_out' = salida al consignatario, 'consignment_in' = regreso al
+// almacén). Mismo patrón de reconstrucción que migrateMovementsTypeCheck().
+//
+// Debe ejecutarse DESPUÉS de migrateMovementsTypeCheck(): tras esa migración el
+// DDL ya contiene 'return', y tras esta contendrá además 'consignment_out'. La
+// detección usa ese token nuevo para no rehacer la tabla en arranques
+// posteriores ni en BD nuevas (cuyo SCHEMA ya lo incluye).
+async function migrateMovementsConsignment(db: Client): Promise<void> {
+  const ddl = await db.execute(
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'movements'",
+  );
+  const sql = String(ddl.rows[0]?.sql ?? "");
+  if (sql.includes("'consignment_out'")) return; // BD nueva o ya migrada.
+
+  await db.execute("PRAGMA foreign_keys = OFF");
+  const tx = await db.transaction("write");
+  try {
+    // Re-verificar DENTRO del lock de escritura (varias instancias serverless
+    // pueden arrancar a la vez).
+    const recheck = await tx.execute(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'movements'",
+    );
+    if (String(recheck.rows[0]?.sql ?? "").includes("'consignment_out'")) {
+      await tx.commit();
+      return;
+    }
+
+    await tx.execute(
+      `CREATE TABLE movements_new (
+         id             INTEGER PRIMARY KEY AUTOINCREMENT,
+         type           TEXT NOT NULL CHECK (type IN ('import','sale','correction','adjustment','return','consignment_out','consignment_in')),
+         user_id        INTEGER NOT NULL,
+         user_name      TEXT NOT NULL,
+         reference      TEXT NOT NULL,
+         size           TEXT NOT NULL,
+         quantity_moved INTEGER NOT NULL,
+         money_received REAL,
+         payment_method TEXT,
+         sale_id        INTEGER,
+         observations   TEXT,
+         created_at     TEXT NOT NULL
+       )`,
+    );
+    await tx.execute(
+      `INSERT INTO movements_new
+         (id, type, user_id, user_name, reference, size, quantity_moved,
+          money_received, payment_method, sale_id, observations, created_at)
+       SELECT id, type, user_id, user_name, reference, size, quantity_moved,
+              money_received, payment_method, sale_id, observations, created_at
+       FROM movements`,
+    );
+    await tx.execute("DROP TABLE movements");
+    await tx.execute("ALTER TABLE movements_new RENAME TO movements");
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  } finally {
+    await db.execute("PRAGMA foreign_keys = ON");
+  }
+}
+
 async function init(): Promise<void> {
   const db = client();
   // Crear esquema (idempotente).
@@ -281,6 +393,9 @@ async function init(): Promise<void> {
 
   // Ampliar el CHECK de movements.type para 'return' si corresponde (una sola vez).
   await migrateMovementsTypeCheck(db);
+
+  // Ampliar el CHECK de movements.type para consignaciones (una sola vez).
+  await migrateMovementsConsignment(db);
 
   // Semilla de usuarios (solo si no hay). ON CONFLICT evita choques si dos
   // instancias arrancan a la vez en producción.

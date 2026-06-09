@@ -41,7 +41,9 @@ export type MovementType =
   | "sale"
   | "correction"
   | "adjustment"
-  | "return";
+  | "return"
+  | "consignment_out"
+  | "consignment_in";
 
 export const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
   import: "Importación",
@@ -49,6 +51,8 @@ export const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
   correction: "Corrección",
   adjustment: "Ajuste",
   return: "Devolución",
+  consignment_out: "Salida a consignación",
+  consignment_in: "Regreso de consignación",
 };
 
 export type ImportMode = "replace" | "merge";
@@ -172,4 +176,74 @@ export interface ImportRow {
   rows_imported: number;
   rows_failed: number;
   created_at: string;
+}
+
+// --- Consignaciones ---
+
+// Tipo de evento de consignación: 'out' = entrega al consignatario (sale del
+// almacén), 'in' = regreso al almacén (devolución de lo no vendido).
+export type ConsignmentEventType = "out" | "in";
+
+// Consignatario: persona que se lleva stock en consignación. Lista gestionada
+// (alta/baja lógica). `active` solo bloquea nuevas entregas; sus existencias y
+// devoluciones siguen disponibles aunque esté inactivo.
+export interface ConsigneeRow {
+  id: number;
+  name: string;
+  phone: string | null;
+  notes: string | null;
+  active: number; // 0 | 1 (SQLite no tiene booleanos)
+  created_at: string;
+}
+
+// Existencias actuales que un consignatario tiene en su poder, por
+// referencia+talla. Se mantiene al día con cada entrega/devolución (saldo
+// materializado, igual que inventory.quantity).
+export interface ConsignmentStockRow {
+  id: number;
+  consignee_id: number;
+  reference: string;
+  size: string;
+  quantity: number;
+  updated_at: string;
+}
+
+// Cabecera de un evento de consignación (entrega o devolución). Una cabecera
+// tiene N líneas en `consignment_event_items`.
+export interface ConsignmentEventRow {
+  id: number;
+  type: ConsignmentEventType;
+  consignee_id: number;
+  consignee_name: string;
+  user_id: number;
+  user_name: string;
+  total_units: number;
+  observations: string | null;
+  created_at: string;
+}
+
+// Línea de producto dentro de un evento de consignación.
+export interface ConsignmentEventItemRow {
+  id: number;
+  event_id: number;
+  reference: string;
+  size: string;
+  quantity: number;
+}
+
+// Cabecera con sus líneas, para listados y detalle.
+export interface ConsignmentEventWithItems extends ConsignmentEventRow {
+  items: ConsignmentEventItemRow[];
+}
+
+// Fila de inventario con el total que hay en consignación (suma entre todos los
+// consignatarios para esa referencia+talla). `quantity` es lo disponible en el
+// almacén; el total real del negocio es quantity + consigned.
+export interface InventoryWithConsignment extends InventoryRow {
+  consigned: number;
+}
+
+// Consignatario con el total de unidades que tiene en su poder (para listados).
+export interface ConsigneeWithHeld extends ConsigneeRow {
+  held_units: number;
 }
