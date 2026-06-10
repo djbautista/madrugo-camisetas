@@ -101,6 +101,10 @@ export interface SaleHeaderRow {
   customer_name: string;
   payment_method: PaymentMethod;
   observations: string | null;
+  // NULL en ventas del almacén; identifican al consignatario cuando la venta se
+  // hizo desde su stock (descontado de consignment_stock, no de inventory).
+  consignee_id: number | null;
+  consignee_name: string | null;
   created_at: string;
 }
 

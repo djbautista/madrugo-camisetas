@@ -50,6 +50,9 @@ const SCHEMA = [
   // Cabecera de venta. Los datos de producto viven en `sale_items` (una venta
   // puede tener varias líneas). En una BD existente con el esquema antiguo
   // (columnas de producto en `sales`), migrate() reconstruye esta tabla.
+  // `consignee_id`/`consignee_name` son NULL en ventas del almacén; cuando la
+  // venta se hace desde el stock de un consignatario, identifican de quién salió
+  // (el stock se descuenta de `consignment_stock`, no de `inventory`).
   `CREATE TABLE IF NOT EXISTS sales (
      id              INTEGER PRIMARY KEY AUTOINCREMENT,
      total_amount    REAL NOT NULL,
@@ -59,6 +62,8 @@ const SCHEMA = [
      customer_name   TEXT NOT NULL,
      payment_method  TEXT NOT NULL,
      observations    TEXT,
+     consignee_id    INTEGER,
+     consignee_name  TEXT,
      created_at      TEXT NOT NULL
    )`,
   // Líneas de producto de cada venta.
@@ -383,6 +388,37 @@ async function migrateMovementsConsignment(db: Client): Promise<void> {
   }
 }
 
+// Migración de una sola vez (detectada por esquema, idempotente): agrega las
+// columnas `consignee_id`/`consignee_name` a `sales` para poder registrar
+// ventas desde el stock de un consignatario.
+//
+// A diferencia de las migraciones de `movements`, aquí basta ALTER TABLE … ADD
+// COLUMN (SQLite lo permite para columnas anulables sin reconstruir la tabla),
+// así que NO se toca la FK saliente de `sale_items` → `sales`.
+//
+// Detección: las BD nuevas o ya migradas ya tienen la columna en table_info.
+async function migrateSalesConsignee(db: Client): Promise<void> {
+  const info = await db.execute("PRAGMA table_info(sales)");
+  if (info.rows.some((r) => r.name === "consignee_id")) return; // ya migrada.
+
+  const tx = await db.transaction("write");
+  try {
+    // Re-verificar DENTRO del lock de escritura (varias instancias serverless
+    // pueden arrancar a la vez; las escrituras se serializan).
+    const recheck = await tx.execute("PRAGMA table_info(sales)");
+    if (recheck.rows.some((r) => r.name === "consignee_id")) {
+      await tx.commit();
+      return;
+    }
+    await tx.execute("ALTER TABLE sales ADD COLUMN consignee_id INTEGER");
+    await tx.execute("ALTER TABLE sales ADD COLUMN consignee_name TEXT");
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  }
+}
+
 async function init(): Promise<void> {
   const db = client();
   // Crear esquema (idempotente).
@@ -396,6 +432,9 @@ async function init(): Promise<void> {
 
   // Ampliar el CHECK de movements.type para consignaciones (una sola vez).
   await migrateMovementsConsignment(db);
+
+  // Agregar columnas de consignatario a `sales` si corresponde (una sola vez).
+  await migrateSalesConsignee(db);
 
   // Semilla de usuarios (solo si no hay). ON CONFLICT evita choques si dos
   // instancias arrancan a la vez en producción.

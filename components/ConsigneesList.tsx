@@ -60,6 +60,16 @@ function ConsigneeRow({ consignee }: { consignee: ConsigneeWithHeld }) {
             Entrega
           </Link>
         )}
+        {/* Vender desde su stock: disponible mientras tenga unidades, incluso
+            si está inactivo (para liquidar lo que le queda). */}
+        {consignee.held_units > 0 && (
+          <Link
+            href={`/ventas/nueva?consignatarioId=${consignee.id}`}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            Vender
+          </Link>
+        )}
         <Link
           href={`/consignaciones/${consignee.id}`}
           className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"

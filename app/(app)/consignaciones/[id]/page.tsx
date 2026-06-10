@@ -5,10 +5,12 @@ import { Badge, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import {
   getConsignee,
   getConsigneeHoldings,
+  getConsigneeSales,
   getConsignmentEvents,
 } from "@/lib/reports";
-import { formatDateTime } from "@/lib/format";
+import { formatCOP, formatDateTime } from "@/lib/format";
 import { requireRole } from "@/lib/session";
+import { SALE_TYPE_LABELS } from "@/lib/types";
 
 export default async function ConsigneeDetailPage({
   params,
@@ -24,9 +26,10 @@ export default async function ConsigneeDetailPage({
   const consignee = await getConsignee(consigneeId);
   if (!consignee) notFound();
 
-  const [holdings, events] = await Promise.all([
+  const [holdings, events, sales] = await Promise.all([
     getConsigneeHoldings(consigneeId),
     getConsignmentEvents(consigneeId),
+    getConsigneeSales(consigneeId),
   ]);
 
   const totalHeld = holdings.reduce((sum, h) => sum + h.quantity, 0);
@@ -47,6 +50,14 @@ export default async function ConsigneeDetailPage({
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
               >
                 Entrega
+              </Link>
+            )}
+            {totalHeld > 0 && (
+              <Link
+                href={`/ventas/nueva?consignatarioId=${consignee.id}`}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                Vender
               </Link>
             )}
             <Link
@@ -116,6 +127,53 @@ export default async function ConsigneeDetailPage({
           />
         </div>
       </div>
+
+      <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-900">
+        Ventas desde su stock
+      </h2>
+      {sales.length === 0 ? (
+        <EmptyState title="Aún no se han registrado ventas desde su stock" />
+      ) : (
+        <Table>
+          <thead className="bg-slate-50">
+            <tr>
+              <Th>Fecha</Th>
+              <Th>Cliente</Th>
+              <Th>Productos</Th>
+              <Th className="text-right">Total</Th>
+              <Th>Registró</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {sales.map((s) => (
+              <tr key={s.id} className="hover:bg-slate-50 align-top">
+                <Td className="whitespace-nowrap">
+                  {formatDateTime(s.created_at)}
+                </Td>
+                <Td className="font-medium text-slate-900">
+                  {s.customer_name}
+                </Td>
+                <Td>
+                  <ul className="space-y-0.5">
+                    {s.items.map((it) => (
+                      <li key={it.id}>
+                        {it.reference} · {it.size} ×{it.quantity}
+                        {it.sale_type === "dozen"
+                          ? ` ${SALE_TYPE_LABELS.dozen.toLowerCase()}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </Td>
+                <Td className="text-right font-semibold">
+                  {formatCOP(s.total_amount)}
+                </Td>
+                <Td className="text-slate-500">{s.seller_name}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
 
       <h2 className="mb-3 mt-8 text-lg font-semibold text-slate-900">
         Historial

@@ -21,6 +21,11 @@ export interface SaleItem {
   dozen_price: number | null;
 }
 
+export interface ConsigneeOption {
+  id: number;
+  name: string;
+}
+
 // Línea agregada al carrito de la venta.
 interface CartLine {
   inventoryId: number;
@@ -52,9 +57,39 @@ function lineUnits(saleType: SaleType, quantity: number): number {
   return saleType === "dozen" ? quantity * UNITS_PER_DOZEN : quantity;
 }
 
-export default function SaleForm({ items }: { items: SaleItem[] }) {
+export default function SaleForm({
+  warehouseItems,
+  consignees,
+  consigneeItems,
+  lockedConsignee,
+}: {
+  // Productos disponibles en el almacén (venta normal).
+  warehouseItems: SaleItem[];
+  // Consignatarios activos elegibles en el desplegable.
+  consignees: ConsigneeOption[];
+  // Existencias vendibles (con precio del catálogo) por id de consignatario.
+  consigneeItems: Record<number, SaleItem[]>;
+  // Si viene fijo (se llegó desde la tarjeta del consignatario), se oculta el
+  // desplegable y la venta se hace desde su stock.
+  lockedConsignee?: ConsigneeOption;
+}) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(createSale, initialState);
+
+  // --- Consignatario a nivel de venta ("" = almacén principal) ---
+  const [consigneeId, setConsigneeId] = useState(
+    lockedConsignee ? String(lockedConsignee.id) : "",
+  );
+
+  // Lista de productos activa: el stock del consignatario seleccionado, o el
+  // almacén si no hay ninguno. Toda la maquinaria de abajo lee `items`.
+  const items = useMemo(
+    () =>
+      consigneeId
+        ? (consigneeItems[Number(consigneeId)] ?? [])
+        : warehouseItems,
+    [consigneeId, consigneeItems, warehouseItems],
+  );
 
   // --- Sub-formulario "agregar línea" ---
   const [reference, setReference] = useState("");
@@ -68,6 +103,17 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
   // --- Carrito y campos a nivel de venta ---
   const [cart, setCart] = useState<CartLine[]>([]);
   const [amountReceived, setAmountReceived] = useState("");
+
+  // Cambiar de consignatario invalida el carrito (los inventoryId y precios solo
+  // valen para una fuente de stock) y reinicia el sub-formulario.
+  function changeConsignee(value: string) {
+    setConsigneeId(value);
+    setCart([]);
+    setReference("");
+    setItemId("");
+    setSaleType("unit");
+    setQuantityInput("1");
+  }
 
   const references = useMemo(
     () => Array.from(new Set(items.map((i) => i.reference))),
@@ -101,6 +147,8 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
     setQuantityInput("1");
     setCart([]);
     setAmountReceived("");
+    // Vuelve al consignatario fijo (si lo hay) o al almacén.
+    setConsigneeId(lockedConsignee ? String(lockedConsignee.id) : "");
   }
 
   // Refrescar datos del servidor tras una venta exitosa.
@@ -180,6 +228,44 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
             Agregar producto
           </h2>
           <div className="space-y-4">
+            {/* Origen del stock: almacén o un consignatario */}
+            {lockedConsignee ? (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  Vendiendo desde el stock de
+                </label>
+                <p className="rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900">
+                  {lockedConsignee.name} (consignación)
+                </p>
+              </div>
+            ) : (
+              consignees.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">
+                    Origen del stock
+                  </label>
+                  <select
+                    value={consigneeId}
+                    onChange={(e) => changeConsignee(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm sm:max-w-sm"
+                  >
+                    <option value="">Almacén principal</option>
+                    {consignees.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        Consignación · {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )
+            )}
+
+            {consigneeId && items.length === 0 && (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Este consignatario no tiene productos con precio para vender.
+              </p>
+            )}
+
             {/* Producto y talla */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
@@ -420,6 +506,8 @@ export default function SaleForm({ items }: { items: SaleItem[] }) {
                 })),
               )}
             />
+            {/* Consignatario (vacío = venta del almacén) */}
+            <input type="hidden" name="consigneeId" value={consigneeId} />
 
             <button
               type="submit"
