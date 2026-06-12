@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Table, Td, Th } from "@/components/ui";
+import { Table, Td, Th } from "@/components/ui";
 import { formatCOP, formatDateTime } from "@/lib/format";
 import {
   PAYMENT_METHOD_LABELS,
@@ -38,7 +38,7 @@ export default function SalesTable({
   }
 
   // +1 por la columna de expansión; +1 si se muestra el vendedor.
-  const colSpan = 7 + (isAdmin ? 1 : 0);
+  const colSpan = 6 + (isAdmin ? 1 : 0);
 
   return (
     <Table>
@@ -47,7 +47,6 @@ export default function SalesTable({
           <Th>{""}</Th>
           <Th>Fecha y hora</Th>
           <Th>Productos</Th>
-          <Th className="text-right">Total</Th>
           <Th className="text-right">Recibido</Th>
           <Th>Pago</Th>
           <Th>Cliente</Th>
@@ -56,7 +55,6 @@ export default function SalesTable({
       </thead>
       <tbody className="divide-y divide-slate-100">
         {sales.map((s) => {
-          const mismatch = s.amount_received !== s.total_amount;
           const isOpen = expanded.has(s.id);
           return (
             <SaleRows
@@ -64,7 +62,6 @@ export default function SalesTable({
               sale={s}
               isAdmin={isAdmin}
               isOpen={isOpen}
-              mismatch={mismatch}
               colSpan={colSpan}
               onToggle={() => toggle(s.id)}
             />
@@ -79,14 +76,12 @@ function SaleRows({
   sale,
   isAdmin,
   isOpen,
-  mismatch,
   colSpan,
   onToggle,
 }: {
   sale: SaleWithItems;
   isAdmin: boolean;
   isOpen: boolean;
-  mismatch: boolean;
   colSpan: number;
   onToggle: () => void;
 }) {
@@ -100,15 +95,7 @@ function SaleRows({
         <Td className="text-slate-400">{isOpen ? "▾" : "▸"}</Td>
         <Td className="whitespace-nowrap">{formatDateTime(sale.created_at)}</Td>
         <Td className="font-medium text-slate-900">{productSummary(sale)}</Td>
-        <Td className="text-right font-semibold">
-          {formatCOP(sale.total_amount)}
-        </Td>
-        <Td className="text-right">
-          <span className="inline-flex items-center gap-1">
-            {formatCOP(sale.amount_received)}
-            {mismatch && <Badge color="amber">≠</Badge>}
-          </span>
-        </Td>
+        <Td className="text-right">{formatCOP(sale.amount_received)}</Td>
         <Td>
           {PAYMENT_METHOD_LABELS[sale.payment_method as PaymentMethod] ??
             sale.payment_method}

@@ -222,6 +222,24 @@ export default async function InventoryPage({
               </tr>
             ))}
           </tbody>
+          <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
+            <tr>
+              <Td className="text-slate-900">Total</Td>
+              <Td>{""}</Td>
+              <Td className="text-right text-slate-900">
+                {inventory.reduce((acc, i) => acc + i.quantity, 0)}
+              </Td>
+              <Td className="text-right text-slate-900">
+                {inventory.reduce((acc, i) => acc + i.consigned, 0)}
+              </Td>
+              <Td className="text-right text-slate-900">
+                {inventory.reduce((acc, i) => acc + i.quantity + i.consigned, 0)}
+              </Td>
+              <Td>{""}</Td>
+              <Td>{""}</Td>
+              <Td>{""}</Td>
+            </tr>
+          </tfoot>
         </Table>
       )}
     </div>
