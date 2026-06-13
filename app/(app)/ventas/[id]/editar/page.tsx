@@ -177,6 +177,7 @@ export default async function EditSalePage({
         initialPaymentMethod={sale.payment_method}
         initialAmountReceived={sale.amount_received}
         initialObservations={sale.observations ?? undefined}
+        initialCreatedAt={sale.created_at}
       />
     </div>
   );

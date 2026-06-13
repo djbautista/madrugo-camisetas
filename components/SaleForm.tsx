@@ -64,6 +64,17 @@ function lineUnits(saleType: SaleType, quantity: number): number {
   return saleType === "dozen" ? quantity * UNITS_PER_DOZEN : quantity;
 }
 
+// ISO almacenado (UTC) -> valor para <input type="datetime-local"> en hora
+// local del navegador ("YYYY-MM-DDTHH:mm"). Cadena vacía si no es válido.
+function isoToLocalInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+    d.getDate(),
+  )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // Agrupador de miles en estilo es-CO ("1.234.567"), sin símbolo de moneda.
 const milesFormat = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 function groupThousands(digits: string): string {
@@ -85,6 +96,7 @@ export default function SaleForm({
   initialPaymentMethod,
   initialAmountReceived,
   initialObservations,
+  initialCreatedAt,
 }: {
   // Productos disponibles en el almacén (venta normal).
   warehouseItems: SaleItem[];
@@ -107,6 +119,9 @@ export default function SaleForm({
   initialPaymentMethod?: PaymentMethod;
   initialAmountReceived?: number;
   initialObservations?: string;
+  // Fecha de la venta (ISO almacenado) al editar. En creación se usa la hora
+  // actual del navegador.
+  initialCreatedAt?: string;
 }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -148,6 +163,26 @@ export default function SaleForm({
   );
   const [amountFocused, setAmountFocused] = useState(false);
   const amountReceived = receivedDigits === "" ? "" : `${receivedDigits}000`;
+
+  // --- Fecha y hora de la venta ---
+  // Valor del <input datetime-local> (hora local). Se inicializa en el cliente
+  // (efecto de montaje) para no chocar con la hidratación: al crear, la hora
+  // actual del navegador; al editar, la fecha original de la venta.
+  // Arranca vacío para que el primer render coincida con el del servidor (la
+  // hora local solo se conoce en el cliente) y no haya desajuste de hidratación;
+  // el efecto de montaje la rellena enseguida.
+  const [saleDate, setSaleDate] = useState("");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSaleDate(
+      initialCreatedAt
+        ? isoToLocalInput(initialCreatedAt)
+        : isoToLocalInput(new Date().toISOString()),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // ISO (UTC) que se envía al server; vacío hasta que el efecto de montaje corre.
+  const createdAtISO = saleDate ? new Date(saleDate).toISOString() : "";
 
   // Cambiar de consignatario invalida el carrito (los inventoryId y precios solo
   // valen para una fuente de stock) y reinicia el sub-formulario.
@@ -197,6 +232,8 @@ export default function SaleForm({
     setQuantityInput("1");
     setCart([]);
     setReceivedDigits("");
+    // La siguiente venta arranca con la hora actual.
+    setSaleDate(isoToLocalInput(new Date().toISOString()));
     // Vuelve al consignatario fijo (si lo hay) o al almacén.
     setConsigneeId(lockedConsignee ? String(lockedConsignee.id) : "");
   }
@@ -228,10 +265,28 @@ export default function SaleForm({
   const insufficientStock = selected ? unitsNeeded > availableUnits : false;
   const canAdd = !!selected && quantity > 0 && !insufficientStock;
 
+  // Línea en composición en el sub-formulario, si ya es válida. Se incluye en la
+  // venta aunque no se pulse "Agregar a la venta", para permitir registrar una
+  // venta de un solo producto sin ese paso extra.
+  const pendingLine: CartLine | null =
+    selected && canAdd
+      ? {
+          inventoryId: selected.id,
+          reference: selected.reference,
+          size: selected.size,
+          saleType,
+          quantity,
+        }
+      : null;
+
+  // Carrito efectivo = lo ya agregado + la línea en composición (si la hay).
+  // Alimenta totales, tabla, envío y el estado del botón "Registrar venta".
+  const effectiveCart = pendingLine ? [...cart, pendingLine] : cart;
+
   // --- Totales del carrito ---
   const cartLines = useMemo(
     () =>
-      cart.map((l) => {
+      effectiveCart.map((l) => {
         const item = items.find((i) => i.id === l.inventoryId)!;
         return {
           ...l,
@@ -240,7 +295,7 @@ export default function SaleForm({
           total: lineTotal(item, l.saleType, l.quantity),
         };
       }),
-    [cart, items],
+    [effectiveCart, items],
   );
   const grandTotal = cartLines.reduce((sum, l) => sum + l.total, 0);
   const totalUnits = cartLines.reduce((sum, l) => sum + l.units, 0);
@@ -269,6 +324,15 @@ export default function SaleForm({
   }
 
   function removeLine(index: number) {
+    // La última fila puede ser la línea en composición (aún sin "Agregar"): en
+    // ese caso "Quitar" limpia el sub-formulario en vez de tocar el carrito.
+    if (index >= cart.length) {
+      setReference("");
+      setItemId("");
+      setSaleType("unit");
+      setQuantityInput("1");
+      return;
+    }
     setCart((c) => c.filter((_, i) => i !== index));
   }
 
@@ -480,6 +544,22 @@ export default function SaleForm({
               </div>
             )}
 
+            {/* Fecha y hora de la venta (editable; por defecto la hora actual) */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700">
+                  Fecha y hora de la venta
+                </label>
+                <input
+                  type="datetime-local"
+                  required
+                  value={saleDate}
+                  onChange={(e) => setSaleDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
             {/* Cliente y pago */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
@@ -562,6 +642,7 @@ export default function SaleForm({
                     className="relative w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
+                <p className="text-xs text-slate-500">Valor en miles de pesos</p>
                 {/* Valor numérico limpio (sin separadores) para el server action. */}
                 <input type="hidden" name="amountReceived" value={amountReceived} />
               </div>
@@ -584,7 +665,7 @@ export default function SaleForm({
               type="hidden"
               name="items"
               value={JSON.stringify(
-                cart.map((l) => ({
+                effectiveCart.map((l) => ({
                   inventoryId: l.inventoryId,
                   saleType: l.saleType,
                   quantity: l.quantity,
@@ -594,6 +675,8 @@ export default function SaleForm({
             {/* Consignatario (vacío = venta del almacén). Al editar el origen
                 queda fijo: el server lo toma de la venta original, no de aquí. */}
             <input type="hidden" name="consigneeId" value={consigneeId} />
+            {/* Fecha de la venta en ISO (UTC), convertida desde la hora local. */}
+            <input type="hidden" name="createdAt" value={createdAtISO} />
             {/* Id de la venta a editar (solo en modo edición). */}
             {isEdit && saleId !== undefined && (
               <input type="hidden" name="saleId" value={saleId} />
@@ -601,7 +684,7 @@ export default function SaleForm({
 
             <button
               type="submit"
-              disabled={pending || cart.length === 0}
+              disabled={pending || effectiveCart.length === 0}
               className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
             >
               {isEdit

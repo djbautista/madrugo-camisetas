@@ -103,6 +103,19 @@ export default function ConsignmentReturnForm({
     setCart((c) => c.filter((_, i) => i !== index));
   }
 
+  // Carga todas las existencias en poder del consignatario al carrito.
+  function addAll() {
+    setCart(
+      holdings.map((h) => ({
+        reference: h.reference,
+        size: h.size,
+        quantity: h.quantity,
+      })),
+    );
+    setHoldingKey("");
+    setQuantityInput("1");
+  }
+
   if (holdings.length === 0) {
     return (
       <Card className="p-5">
@@ -168,14 +181,23 @@ export default function ConsignmentReturnForm({
           </p>
         )}
 
-        <button
-          type="button"
-          onClick={addLine}
-          disabled={!canAdd}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
-        >
-          Agregar a la devolución
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={addLine}
+            disabled={!canAdd}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-60"
+          >
+            Agregar a la devolución
+          </button>
+          <button
+            type="button"
+            onClick={addAll}
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Devolver todo
+          </button>
+        </div>
       </div>
 
       <form action={formAction} className="mt-5 space-y-4 border-t border-slate-100 pt-5">
