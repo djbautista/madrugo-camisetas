@@ -155,6 +155,17 @@ export interface ReturnWithItems extends ReturnHeaderRow {
   items: ReturnItemRow[];
 }
 
+// Gasto operativo (arriendo, transporte, insumos…). Registro plano: la fecha
+// es `created_at` (sello automático) y el valor es `amount`.
+export interface ExpenseRow {
+  id: number;
+  concept: string;
+  amount: number;
+  user_id: number;
+  user_name: string;
+  created_at: string;
+}
+
 export interface MovementRow {
   id: number;
   type: MovementType;

@@ -205,7 +205,6 @@ export async function createReturn(
     revalidatePath("/devoluciones");
     revalidatePath("/inventario");
     revalidatePath("/movimientos");
-    revalidatePath("/reportes");
     revalidatePath("/");
 
     return { success: "Devolución registrada correctamente.", returnId };

@@ -197,7 +197,6 @@ export async function importInventory(
   await db.batch(statements, "write");
 
   revalidatePath("/inventario");
-  revalidatePath("/reportes");
   revalidatePath("/movimientos");
   revalidatePath("/");
 
@@ -293,7 +292,6 @@ export async function adjustInventory(
   }
 
   revalidatePath("/inventario");
-  revalidatePath("/reportes");
   revalidatePath("/movimientos");
 
   return { success: "Inventario ajustado correctamente." };

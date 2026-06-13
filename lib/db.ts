@@ -176,6 +176,18 @@ const SCHEMA = [
      quantity  INTEGER NOT NULL CHECK (quantity > 0)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_consignment_event_items_event ON consignment_event_items(event_id)`,
+  // --- Gastos (costos operativos) ---
+  // Registro plano de gastos del negocio (arriendo, transporte, insumos…). No
+  // toca inventario ni caja de ventas: es un libro aparte de salidas de dinero.
+  // `created_at` es la fecha del gasto (sello automático) y `amount` su valor.
+  `CREATE TABLE IF NOT EXISTS expenses (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     concept    TEXT NOT NULL,
+     amount     REAL NOT NULL CHECK (amount > 0),
+     user_id    INTEGER NOT NULL,
+     user_name  TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
 ];
 
 // Migración de una sola vez (detectada por esquema, idempotente): convierte el

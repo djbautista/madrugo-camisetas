@@ -34,12 +34,6 @@ const QUICK_LINKS: { href: string; title: string; desc: string; roles: Role[] }[
     roles: ["admin"],
   },
   {
-    href: "/reportes",
-    title: "Ver reportes",
-    desc: "Ventas, stock bajo y más",
-    roles: ["admin", "viewer"],
-  },
-  {
     href: "/movimientos",
     title: "Historial de movimientos",
     desc: "Trazabilidad de todo el inventario",
