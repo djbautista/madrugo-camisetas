@@ -9,6 +9,7 @@ import {
   PAYMENT_METHODS,
   SALE_TYPE_LABELS,
   UNITS_PER_DOZEN,
+  type PaymentMethod,
   type SaleType,
 } from "@/lib/types";
 
@@ -27,13 +28,19 @@ export interface ConsigneeOption {
 }
 
 // Línea agregada al carrito de la venta.
-interface CartLine {
+export interface CartLine {
   inventoryId: number;
   reference: string;
   size: string;
   saleType: SaleType;
   quantity: number;
 }
+
+// Firma compartida por createSale y editSale.
+type SaleAction = (
+  prevState: SaleState,
+  formData: FormData,
+) => Promise<SaleState>;
 
 const initialState: SaleState = {};
 
@@ -57,11 +64,27 @@ function lineUnits(saleType: SaleType, quantity: number): number {
   return saleType === "dozen" ? quantity * UNITS_PER_DOZEN : quantity;
 }
 
+// Agrupador de miles en estilo es-CO ("1.234.567"), sin símbolo de moneda.
+const milesFormat = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
+function groupThousands(digits: string): string {
+  if (digits === "") return "";
+  const n = Number(digits);
+  return Number.isNaN(n) ? "" : milesFormat.format(n);
+}
+
 export default function SaleForm({
   warehouseItems,
   consignees,
   consigneeItems,
   lockedConsignee,
+  action = createSale,
+  mode = "create",
+  saleId,
+  initialCart,
+  initialCustomerName,
+  initialPaymentMethod,
+  initialAmountReceived,
+  initialObservations,
 }: {
   // Productos disponibles en el almacén (venta normal).
   warehouseItems: SaleItem[];
@@ -72,9 +95,22 @@ export default function SaleForm({
   // Si viene fijo (se llegó desde la tarjeta del consignatario), se oculta el
   // desplegable y la venta se hace desde su stock.
   lockedConsignee?: ConsigneeOption;
+  // --- Modo edición ---
+  // Server action a usar (createSale por defecto; editSale al editar).
+  action?: SaleAction;
+  mode?: "create" | "edit";
+  // Id de la venta que se edita (se envía oculto al server action).
+  saleId?: number;
+  // Valores con los que precargar el formulario al editar.
+  initialCart?: CartLine[];
+  initialCustomerName?: string;
+  initialPaymentMethod?: PaymentMethod;
+  initialAmountReceived?: number;
+  initialObservations?: string;
 }) {
   const router = useRouter();
-  const [state, formAction, pending] = useActionState(createSale, initialState);
+  const [state, formAction, pending] = useActionState(action, initialState);
+  const isEdit = mode === "edit";
 
   // --- Consignatario a nivel de venta ("" = almacén principal) ---
   const [consigneeId, setConsigneeId] = useState(
@@ -101,8 +137,17 @@ export default function SaleForm({
   const quantity = Math.floor(Number(quantityInput)) || 0;
 
   // --- Carrito y campos a nivel de venta ---
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [amountReceived, setAmountReceived] = useState("");
+  const [cart, setCart] = useState<CartLine[]>(initialCart ?? []);
+  // El cajero teclea en miles; el sufijo "000" se completa solo (los montos son
+  // siempre redondos). `receivedDigits` son los dígitos significativos tecleados.
+  // Al editar se precarga desde el monto original (asumido múltiplo de mil).
+  const [receivedDigits, setReceivedDigits] = useState(
+    initialAmountReceived && initialAmountReceived > 0
+      ? String(Math.round(initialAmountReceived / 1000))
+      : "",
+  );
+  const [amountFocused, setAmountFocused] = useState(false);
+  const amountReceived = receivedDigits === "" ? "" : `${receivedDigits}000`;
 
   // Cambiar de consignatario invalida el carrito (los inventoryId y precios solo
   // valen para una fuente de stock) y reinicia el sub-formulario.
@@ -135,26 +180,34 @@ export default function SaleForm({
   if (!canDozen && saleType === "dozen") setSaleType("unit");
 
   // Limpiar el formulario tras una venta exitosa (ajuste de estado durante el
-  // render, con guarda por saleId para hacerlo una sola vez).
+  // render, con guarda por saleId para hacerlo una sola vez). Solo en creación:
+  // al editar se redirige a /ventas, no se limpia.
   const [handledSaleId, setHandledSaleId] = useState<number | undefined>(
     undefined,
   );
-  if (state.saleId !== undefined && state.saleId !== handledSaleId) {
+  if (
+    !isEdit &&
+    state.saleId !== undefined &&
+    state.saleId !== handledSaleId
+  ) {
     setHandledSaleId(state.saleId);
     setReference("");
     setItemId("");
     setSaleType("unit");
     setQuantityInput("1");
     setCart([]);
-    setAmountReceived("");
+    setReceivedDigits("");
     // Vuelve al consignatario fijo (si lo hay) o al almacén.
     setConsigneeId(lockedConsignee ? String(lockedConsignee.id) : "");
   }
 
-  // Refrescar datos del servidor tras una venta exitosa.
+  // Tras el éxito: al editar se vuelve al listado de ventas; al crear se
+  // refrescan los datos del servidor (stock disponible, etc.).
   useEffect(() => {
-    if (state.success) router.refresh();
-  }, [state.success, state.saleId, router]);
+    if (!state.success) return;
+    if (isEdit) router.push("/ventas");
+    else router.refresh();
+  }, [state.success, state.saleId, isEdit, router]);
 
   // Unidades ya comprometidas en el carrito para el producto seleccionado.
   const committedUnits = useMemo(
@@ -437,6 +490,7 @@ export default function SaleForm({
                   name="customerName"
                   type="text"
                   required
+                  defaultValue={initialCustomerName}
                   placeholder="Nombre del comprador"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 />
@@ -449,7 +503,7 @@ export default function SaleForm({
                 <select
                   name="paymentMethod"
                   required
-                  defaultValue=""
+                  defaultValue={initialPaymentMethod ?? ""}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 >
                   <option value="" disabled>
@@ -464,22 +518,52 @@ export default function SaleForm({
               </div>
             </div>
 
-            {/* Monto recibido */}
+            {/* Monto recibido — el cajero teclea en miles; el "000" se
+                autocompleta atenuado (como un placeholder de autocompletado)
+                mientras escribe y se fija con el mismo estilo al salir del campo. */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700">
                   Monto recibido
                 </label>
-                <input
-                  name="amountReceived"
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={amountReceived}
-                  onChange={(e) => setAmountReceived(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
+                <div className="relative">
+                  {/* Capa de fondo: reserva el ancho de lo ya escrito (invisible)
+                      y pinta el sufijo "000" atenuado, alineado justo después. */}
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 flex items-center whitespace-pre rounded-lg border border-transparent px-3 py-2 text-sm"
+                  >
+                    <span className="invisible">
+                      {groupThousands(receivedDigits)}
+                    </span>
+                    {amountFocused && receivedDigits !== "" && (
+                      <span className="text-slate-400">.000</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={
+                      receivedDigits === ""
+                        ? ""
+                        : amountFocused
+                          ? groupThousands(receivedDigits)
+                          : groupThousands(amountReceived)
+                    }
+                    onChange={(e) =>
+                      setReceivedDigits(
+                        e.target.value.replace(/\D/g, "").replace(/^0+/, ""),
+                      )
+                    }
+                    onFocus={() => setAmountFocused(true)}
+                    onBlur={() => setAmountFocused(false)}
+                    placeholder="0"
+                    className="relative w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                {/* Valor numérico limpio (sin separadores) para el server action. */}
+                <input type="hidden" name="amountReceived" value={amountReceived} />
               </div>
             </div>
 
@@ -490,6 +574,7 @@ export default function SaleForm({
               <textarea
                 name="observations"
                 rows={2}
+                defaultValue={initialObservations}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
@@ -506,15 +591,26 @@ export default function SaleForm({
                 })),
               )}
             />
-            {/* Consignatario (vacío = venta del almacén) */}
+            {/* Consignatario (vacío = venta del almacén). Al editar el origen
+                queda fijo: el server lo toma de la venta original, no de aquí. */}
             <input type="hidden" name="consigneeId" value={consigneeId} />
+            {/* Id de la venta a editar (solo en modo edición). */}
+            {isEdit && saleId !== undefined && (
+              <input type="hidden" name="saleId" value={saleId} />
+            )}
 
             <button
               type="submit"
               disabled={pending || cart.length === 0}
               className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
             >
-              {pending ? "Registrando…" : "Registrar venta"}
+              {isEdit
+                ? pending
+                  ? "Guardando…"
+                  : "Guardar cambios"
+                : pending
+                  ? "Registrando…"
+                  : "Registrar venta"}
             </button>
           </form>
         </Card>

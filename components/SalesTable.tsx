@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Table, Td, Th } from "@/components/ui";
 import { formatCOP, formatDateTime } from "@/lib/format";
 import {
@@ -147,6 +148,16 @@ function SaleRows({
               <p className="mt-2 text-xs text-slate-500">
                 Observaciones: {sale.observations}
               </p>
+            )}
+            {isAdmin && (
+              <div className="mt-3">
+                <Link
+                  href={`/ventas/${sale.id}/editar`}
+                  className="inline-flex rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  Editar venta
+                </Link>
+              </div>
             )}
           </td>
         </tr>
