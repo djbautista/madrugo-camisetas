@@ -203,37 +203,12 @@ export default function SaleForm({
   // (ajuste de estado durante el render, con guarda).
   if (!canDozen && saleType === "dozen") setSaleType("unit");
 
-  // Limpiar el formulario tras una venta exitosa (ajuste de estado durante el
-  // render, con guarda por saleId para hacerlo una sola vez). Solo en creación:
-  // al editar se redirige a /ventas, no se limpia.
-  const [handledSaleId, setHandledSaleId] = useState<number | undefined>(
-    undefined,
-  );
-  if (
-    !isEdit &&
-    state.saleId !== undefined &&
-    state.saleId !== handledSaleId
-  ) {
-    setHandledSaleId(state.saleId);
-    setReference("");
-    setItemId("");
-    setSaleType("unit");
-    setQuantityInput("1");
-    setCart([]);
-    setAmountReceived("");
-    // La siguiente venta arranca con la hora actual.
-    setSaleDate(isoToLocalInput(new Date().toISOString()));
-    // Vuelve al consignatario fijo (si lo hay) o al almacén.
-    setConsigneeId(lockedConsignee ? String(lockedConsignee.id) : "");
-  }
-
-  // Tras el éxito: al editar se vuelve al listado de ventas; al crear se
-  // refrescan los datos del servidor (stock disponible, etc.).
+  // Tras el éxito, tanto al crear como al editar, se redirige al listado de
+  // ventas (la tabla de ventas), que se revalida en el server action.
   useEffect(() => {
     if (!state.success) return;
-    if (isEdit) router.push("/ventas");
-    else router.refresh();
-  }, [state.success, state.saleId, isEdit, router]);
+    router.push("/ventas");
+  }, [state.success, router]);
 
   // Unidades ya comprometidas en el carrito para el producto seleccionado.
   const committedUnits = useMemo(
