@@ -75,14 +75,6 @@ function isoToLocalInput(iso: string): string {
   )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Agrupador de miles en estilo es-CO ("1.234.567"), sin símbolo de moneda.
-const milesFormat = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
-function groupThousands(digits: string): string {
-  if (digits === "") return "";
-  const n = Number(digits);
-  return Number.isNaN(n) ? "" : milesFormat.format(n);
-}
-
 export default function SaleForm({
   warehouseItems,
   consignees,
@@ -153,16 +145,13 @@ export default function SaleForm({
 
   // --- Carrito y campos a nivel de venta ---
   const [cart, setCart] = useState<CartLine[]>(initialCart ?? []);
-  // El cajero teclea en miles; el sufijo "000" se completa solo (los montos son
-  // siempre redondos). `receivedDigits` son los dígitos significativos tecleados.
-  // Al editar se precarga desde el monto original (asumido múltiplo de mil).
-  const [receivedDigits, setReceivedDigits] = useState(
+  // Monto recibido (valor real en pesos). El botón "+000" junto al campo agrega
+  // los miles a demanda; no hay autocompletado mientras se escribe.
+  const [amountReceived, setAmountReceived] = useState(
     initialAmountReceived && initialAmountReceived > 0
-      ? String(Math.round(initialAmountReceived / 1000))
+      ? String(initialAmountReceived)
       : "",
   );
-  const [amountFocused, setAmountFocused] = useState(false);
-  const amountReceived = receivedDigits === "" ? "" : `${receivedDigits}000`;
 
   // --- Fecha y hora de la venta ---
   // Valor del <input datetime-local> (hora local). Se inicializa en el cliente
@@ -231,7 +220,7 @@ export default function SaleForm({
     setSaleType("unit");
     setQuantityInput("1");
     setCart([]);
-    setReceivedDigits("");
+    setAmountReceived("");
     // La siguiente venta arranca con la hora actual.
     setSaleDate(isoToLocalInput(new Date().toISOString()));
     // Vuelve al consignatario fijo (si lo hay) o al almacén.
@@ -334,6 +323,14 @@ export default function SaleForm({
       return;
     }
     setCart((c) => c.filter((_, i) => i !== index));
+  }
+
+  // Agrega los miles (000) al monto recibido, solo cuando el usuario lo pide.
+  function appendThousands() {
+    setAmountReceived((v) => {
+      const digits = v.replace(/\D/g, "");
+      return digits === "" ? v : `${digits}000`;
+    });
   }
 
   return (
@@ -598,53 +595,34 @@ export default function SaleForm({
               </div>
             </div>
 
-            {/* Monto recibido — el cajero teclea en miles; el "000" se
-                autocompleta atenuado (como un placeholder de autocompletado)
-                mientras escribe y se fija con el mismo estilo al salir del campo. */}
+            {/* Monto recibido. El botón "+000" agrega los miles a demanda. */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700">
                   Monto recibido
                 </label>
-                <div className="relative">
-                  {/* Capa de fondo: reserva el ancho de lo ya escrito (invisible)
-                      y pinta el sufijo "000" atenuado, alineado justo después. */}
-                  <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 flex items-center whitespace-pre rounded-lg border border-transparent px-3 py-2 text-sm"
-                  >
-                    <span className="invisible">
-                      {groupThousands(receivedDigits)}
-                    </span>
-                    {amountFocused && receivedDigits !== "" && (
-                      <span className="text-slate-400">.000</span>
-                    )}
-                  </div>
+                <div className="flex gap-2">
                   <input
-                    type="text"
-                    inputMode="numeric"
+                    name="amountReceived"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={amountReceived}
+                    onChange={(e) => setAmountReceived(e.target.value)}
                     required
-                    value={
-                      receivedDigits === ""
-                        ? ""
-                        : amountFocused
-                          ? groupThousands(receivedDigits)
-                          : groupThousands(amountReceived)
-                    }
-                    onChange={(e) =>
-                      setReceivedDigits(
-                        e.target.value.replace(/\D/g, "").replace(/^0+/, ""),
-                      )
-                    }
-                    onFocus={() => setAmountFocused(true)}
-                    onBlur={() => setAmountFocused(false)}
                     placeholder="0"
-                    className="relative w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   />
+                  <button
+                    type="button"
+                    onClick={appendThousands}
+                    disabled={amountReceived.replace(/\D/g, "") === ""}
+                    title="Agregar tres ceros (miles)"
+                    className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    +000
+                  </button>
                 </div>
-                <p className="text-xs text-slate-500">Valor en miles de pesos</p>
-                {/* Valor numérico limpio (sin separadores) para el server action. */}
-                <input type="hidden" name="amountReceived" value={amountReceived} />
               </div>
             </div>
 
